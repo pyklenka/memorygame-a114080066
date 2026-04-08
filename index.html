@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>記憶翻牌小遊戲 - Local Edition</title>
+    <style>
+        :root { --primary: #6c5ce7; --bg: #f4f7f6; --card-bg: #2d3436; }
+        body { font-family: 'PingFang TC', sans-serif; background: var(--bg); margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        
+        /* 介面切換 */
+        .screen { display: none; width: 100%; max-width: 500px; padding: 20px; text-align: center; }
+        .active { display: block; }
+
+        /* 排行榜樣式 */
+        .leaderboard { background: white; border-radius: 12px; padding: 15px; margin-top: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .lb-list { max-height: 300px; overflow-y: auto; margin-top: 10px; }
+        .lb-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; color: #333; }
+        .lb-item:first-child { color: #d4af37; font-weight: bold; background: #fffdf0; border-radius: 5px; }
+
+        /* 遊戲元素 */
+        .grid { display: grid; grid-template-columns: repeat(4, 80px); gap: 12px; justify-content: center; margin: 25px 0; }
+        .card { width: 80px; height: 110px; background: var(--card-bg); cursor: pointer; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 35px; color: transparent; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform-style: preserve-3d; }
+        .card.flipped { background: white; color: initial; border: 3px solid var(--primary); transform: rotateY(180deg); }
+        
+        button { padding: 12px 28px; font-size: 18px; cursor: pointer; border: none; border-radius: 8px; background: var(--primary); color: white; margin: 10px; transition: 0.2s; box-shadow: 0 4px #4834d4; }
+        button:active { transform: translateY(2px); box-shadow: 0 2px #4834d4; }
+
+        #pause-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; z-index: 1000; flex-direction: column; align-items: center; justify-content: center; color: white; }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen" class="screen active">
+        <h1>🧠 記憶大挑戰</h1>
+        <p>找出所有配對，挑戰最短時間！</p>
+        <button onclick="startGame()">開始遊戲</button>
+        <div class="leaderboard">
+            <h3>🏆 本地排行榜 (前100名)</h3>
+            <div id="lb-main" class="lb-list">讀取中...</div>
+            <button onclick="clearLeaderboard()" style="font-size: 12px; padding: 5px 10px; background: #ff7675; box-shadow: 0 2px #d63031;">重置排行</button>
+        </div>
+    </div>
+
+    <div id="game-screen" class="screen">
+        <div style="background: white; padding: 10px; border-radius: 10px; display: inline-block; margin-bottom: 10px;">
+            <span style="color: #333;">時間：<strong id="timer">0</strong>s</span>
+        </div>
+        <br>
+        <button onclick="togglePause()" id="pause-btn">暫停遊戲</button>
+        <button onclick="showScreen('start-screen')" style="background: #95a5a6; box-shadow: 0 4px #7f8c8d;">回主選單</button>
+        
+        <div class="grid" id="game-board"></div>
+    </div>
+
+    <div id="pause-overlay">
+        <h2>遊戲暫停中</h2>
+        <button onclick="togglePause()">繼續挑戰</button>
+    </div>
+
+    <script>
+        const cardsArray = ['🔮','🔮','🌙','🌙','🕯️','🕯️','🃏','🃏','🧿','🧿','💎','💎'];
+        let seconds = 0, timerId = null, matchedPairs = 0, flippedCards = [], isPaused = false;
+
+        // 初始化：從 localStorage 讀取排行榜
+        function fetchLeaderboard() {
+            let data = JSON.parse(localStorage.getItem('game_leaderboard')) || [];
+            // 排序：時間越短越前面
+            data.sort((a, b) => a.time - b.time);
+            
+            const container = document.getElementById('lb-main');
+            container.innerHTML = data.slice(0, 100).map((item, index) => 
+                `<div class="lb-item"><span>${index+1}. ${item.name}</span><span>${item.time}s</span></div>`
+            ).join('') || '<div style="padding:10px; color:#999;">目前尚無紀錄，快來當第一名！</div>';
+            
+            return data.length > 0 ? data[0].time : 999;
+        }
+
+        function startGame() {
+            showScreen('game-screen');
+            initGame();
+        }
+
+        function initGame() {
+            clearInterval(timerId);
+            seconds = 0; matchedPairs = 0; flippedCards = []; isPaused = false;
+            document.getElementById('timer').innerText = '0';
+            const shuffled = [...cardsArray].sort(() => 0.5 - Math.random());
+            const board = document.getElementById('game-board');
+            board.innerHTML = '';
+            
+            shuffled.forEach(emoji => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.dataset.value = emoji;
+                card.innerText = emoji;
+                card.onclick = () => flipCard(card);
+                board.appendChild(card);
+            });
+            
+            timerId = setInterval(() => { 
+                if(!isPaused) { 
+                    seconds++; 
+                    document.getElementById('timer').innerText = seconds; 
+                } 
+            }, 1000);
+        }
+
+        function flipCard(card) {
+            if(isPaused || flippedCards.length >= 2 || card.classList.contains('flipped')) return;
+            card.classList.add('flipped');
+            flippedCards.push(card);
+            
+            if(flippedCards.length === 2) {
+                if(flippedCards[0].dataset.value === flippedCards[1].dataset.value) {
+                    matchedPairs++;
+                    flippedCards = [];
+                    if(matchedPairs === cardsArray.length/2) endGame();
+                } else {
+                    setTimeout(() => {
+                        flippedCards.forEach(c => c.classList.remove('flipped'));
+                        flippedCards = [];
+                    }, 600);
+                }
+            }
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+            document.getElementById('pause-overlay').style.display = isPaused ? 'flex' : 'none';
+        }
+
+        function endGame() {
+            clearInterval(timerId);
+            let currentBest = fetchLeaderboard();
+            
+            if (seconds < currentBest) {
+                alert("🎊 恭喜！你重新整理了最佳紀錄！ 🎊");
+            }
+
+            const name = prompt(`挑戰成功！總共花了 ${seconds} 秒。\n請輸入暱稱來保存你的榮耀：`);
+            
+            if(name) {
+                saveScore(name, seconds);
+            }
+            showScreen('start-screen');
+            fetchLeaderboard();
+        }
+
+        function saveScore(name, time) {
+            let data = JSON.parse(localStorage.getItem('game_leaderboard')) || [];
+            data.push({ name: name, time: time });
+            localStorage.setItem('game_leaderboard', JSON.stringify(data));
+        }
+
+        function clearLeaderboard() {
+            if(confirm("確定要刪除所有本地排名紀錄嗎？")) {
+                localStorage.removeItem('game_leaderboard');
+                fetchLeaderboard();
+            }
+        }
+
+        function showScreen(id) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+        }
+
+        // 初始化
+        fetchLeaderboard();
+    </script>
+</body>
+</html>
